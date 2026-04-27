@@ -18,7 +18,7 @@ The dates must be in the format YYYY-MM-DD.
 The script will interactively prompt you for your password.
 
 > :information_source: **NOTE:** To collect your Weight Watchers data, you must supply a way to authenticate to the Weight Watchers website.
-> This can be with your website email address (`-E`) and interactively entering your password when prompted, or by specifying a Java Web Token (JWT) after logging in with your browser normally.
+> This can be with your website email address (`-E`) and interactively entering your password when prompted, or by specifying a JSON Web Token (JWT) extracted from the `wwSession` cookie after logging in with your browser.
 > For more information on using a JWT for authentication, see [AUTHJWT.md](https://github.com/joswr1ght/wwtracked/blob/main/AUTHJWT.md).
 
 

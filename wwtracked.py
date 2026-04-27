@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 import datetime
 import requests
 import json
@@ -28,7 +29,7 @@ def daterange(date1, date2):
     return dates
 
 
-def printfood(foods):
+def printfood(foods, outfile=sys.stdout):
     """
     Using the food elements for morning, midday, evening, or anytime,
     display the food name and portion (if available) as a Markdown
@@ -53,7 +54,7 @@ def printfood(foods):
         except KeyError:
             # Quick add foods lack a portion size and portion name
             suffix = ''
-        print(f'* {foodname}{suffix}')
+        print(f'* {foodname}{suffix}', file=outfile)
 
 
 def getfoodentrynutrition(foodentry):
@@ -150,9 +151,9 @@ def writenutritiondata(nutritionarr):
               'Added Sugar', 'Protein']
 
     if startdate == enddate:
-        filename = f'Nutrition Data {startdate}.csv'
+        filename = os.path.join('reports', f'Nutrition Data {startdate}.csv')
     else:
-        filename = f'Nutrition Data {startdate} to {enddate}.csv'
+        filename = os.path.join('reports', f'Nutrition Data {startdate} to {enddate}.csv')
 
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
@@ -288,6 +289,8 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--end', required=True, help='End date as YYYY-MM-DD')
     parser.add_argument('-n', '--nutrition', action='store_true', help='Produce a CSV report of nutritional data')
     parser.add_argument('-l', '--tld', default='com', help='Specify the top-level domain (com, co.uk, etc.) to use for login and API endpoints')
+    parser.add_argument('-o', '--output', default=None, metavar='FILE',
+                        help='Write the Markdown report to FILE instead of the default reports/ directory. Use - for stdout.')
     args = parser.parse_args()
 
     if (args.email is None and args.jwt is None):
@@ -344,11 +347,26 @@ if __name__ == '__main__':
 
     authheader = {'Authorization': f'Bearer {jwt}'}
 
+    os.makedirs('reports', exist_ok=True)
+
+    if args.output == '-':
+        outfile = sys.stdout
+        report_path = None
+    else:
+        if args.output is not None:
+            report_path = args.output
+        else:
+            if startdate == enddate:
+                report_path = os.path.join('reports', f'Food Log {startdate}.md')
+            else:
+                report_path = os.path.join('reports', f'Food Log {startdate} to {enddate}.md')
+        outfile = open(report_path, 'w', encoding='utf-8')
+
     # Start generating the Markdown report
     if (email is not None):
-        print(f'# Weight Watchers Tracked Food Report for {email}\n\n> {args.start} - {args.end}\n')
+        print(f'# Weight Watchers Tracked Food Report for {email}\n\n> {args.start} - {args.end}\n', file=outfile)
     else:
-        print(f'# Weight Watchers Tracked Food Report\n\n> {args.start} - {args.end}\n')
+        print(f'# Weight Watchers Tracked Food Report\n\n> {args.start} - {args.end}\n', file=outfile)
 
     for date in daterange(startdate, enddate):
         # WW API endpoint with date at the end in the format YYYY-MM-DD
@@ -361,37 +379,41 @@ if __name__ == '__main__':
             exit(-1)
 
         trackedday = json.loads(response.content)
-        print(f'\n## {date}')
+        print(f'\n## {date}', file=outfile)
 
         try:
-            print('\n### Breakfast\n')
+            print('\n### Breakfast\n', file=outfile)
             morning = trackedday['today']['trackedFoods']['morning']
-            printfood(morning)
+            printfood(morning, outfile)
         except KeyError:
             pass
 
         try:
-            print('\n### Lunch\n')
+            print('\n### Lunch\n', file=outfile)
             midday = trackedday['today']['trackedFoods']['midday']
-            printfood(midday)
+            printfood(midday, outfile)
         except KeyError:
             pass
 
         try:
-            print('\n### Dinner\n')
+            print('\n### Dinner\n', file=outfile)
             evening = trackedday['today']['trackedFoods']['evening']
-            printfood(evening)
+            printfood(evening, outfile)
         except KeyError:
             pass
 
         try:
-            print('\n### Snacks\n')
+            print('\n### Snacks\n', file=outfile)
             anytime = trackedday['today']['trackedFoods']['anytime']
-            printfood(anytime)
+            printfood(anytime, outfile)
         except KeyError:
             pass
 
-        print('')
+        print('', file=outfile)
+
+    if outfile is not sys.stdout:
+        outfile.close()
+        sys.stderr.write(f'Food log written to "{report_path}"\n')
 
     if requestnutrition:
         writenutritiondata(nutritionarr)

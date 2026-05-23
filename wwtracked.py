@@ -408,10 +408,11 @@ if __name__ == '__main__':
         outfile = open(report_path, 'w', encoding='utf-8')
 
     # Start generating the Markdown report
+    date_range_str = f'{startdate} - {enddate}'
     if (email is not None):
-        print(f'# Weight Watchers Tracked Food Report for {email}\n\n> {args.start} - {args.end}\n', file=outfile)
+        print(f'# Weight Watchers Tracked Food Report for {email}\n\n> {date_range_str}\n', file=outfile)
     else:
-        print(f'# Weight Watchers Tracked Food Report\n\n> {args.start} - {args.end}\n', file=outfile)
+        print(f'# Weight Watchers Tracked Food Report\n\n> {date_range_str}\n', file=outfile)
 
     for date in daterange(startdate, enddate):
         # WW API endpoint with date at the end in the format YYYY-MM-DD
@@ -419,8 +420,8 @@ if __name__ == '__main__':
         url = f'{endpointurl}/{date}'
         response = requests.get(url, headers=authheader)
         if (response.status_code != 200):
-            sys.stderr.write(f'ERROR: Invalid response from weightwatchers.com API ({response.status_code}). ')
-            sys.stderr.write('Make sure you have a valid JWT from a logged-in browser session.\n')
+            sys.stderr.write(f'ERROR: Invalid response from weightwatchers.com API ({response.status_code}) for {date}.\n')
+            sys.stderr.write(f'Response body: {response.text[:500]}\n')
             exit(-1)
 
         trackedday = json.loads(response.content)

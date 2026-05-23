@@ -428,6 +428,8 @@ if __name__ == '__main__':
             exit(-1)
 
         trackedday = json.loads(response.content)
+        meal_count = sum(len(trackedday['today']['trackedFoods'].get(m, [])) for m in ('morning', 'midday', 'evening', 'anytime')) if 'today' in trackedday and 'trackedFoods' in trackedday.get('today', {}) else 0
+        sys.stderr.write(f'INFO: {date} — {meal_count} food item(s)\n')
         print(f'\n## {date}', file=outfile)
 
         try:

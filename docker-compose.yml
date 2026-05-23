@@ -1,0 +1,9 @@
+services:
+  wwtracked:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./service-account-key.json:/app/service-account-key.json:ro
+      - ./reports:/app/reports

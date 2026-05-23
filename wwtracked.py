@@ -13,6 +13,12 @@ import argparse
 from urllib import parse
 # import pdb
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 tld = 'com'
 
 def daterange(date1, date2):
@@ -283,18 +289,27 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group()
-    group.add_argument('-E', '--email', help='Specify the login email address')
-    group.add_argument('-J', '--jwt', help='Specify the JWT')
+    group.add_argument('-E', '--email', help='Specify the login email address (or set WW_EMAIL in .env)')
+    group.add_argument('-J', '--jwt', help='Specify the JWT (or set WW_JWT in .env)')
     parser.add_argument('-s', '--start', required=True, help='Start date as YYYY-MM-DD')
     parser.add_argument('-e', '--end', required=True, help='End date as YYYY-MM-DD')
     parser.add_argument('-n', '--nutrition', action='store_true', help='Produce a CSV report of nutritional data')
     parser.add_argument('-l', '--tld', default='com', help='Specify the top-level domain (com, co.uk, etc.) to use for login and API endpoints')
     parser.add_argument('-o', '--output', default=None, metavar='FILE',
                         help='Write the Markdown report to FILE instead of the default reports/ directory. Use - for stdout.')
+    parser.add_argument('--gsheets', action='store_true',
+                        help='Export nutrition data to Google Sheets (requires GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_KEY in .env)')
     args = parser.parse_args()
 
+    # Fall back to environment variables for credentials
+    if args.email is None and args.jwt is None:
+        if os.environ.get('WW_JWT'):
+            args.jwt = os.environ['WW_JWT']
+        elif os.environ.get('WW_EMAIL'):
+            args.email = os.environ['WW_EMAIL']
+
     if (args.email is None and args.jwt is None):
-        sys.stderr.write('ERROR: Must specify the login email address with -E or a JWT with -J.\n')
+        sys.stderr.write('ERROR: Must specify the login email address with -E / WW_EMAIL or a JWT with -J / WW_JWT.\n')
         parser.print_help()
         sys.exit(1)
 
@@ -311,6 +326,9 @@ if __name__ == '__main__':
         # I stole this convention from the SAMBA project (smbclient, rpcclient)
         if '%' in args.email:
             email, password = args.email.split('%')
+        elif os.environ.get('WW_PASSWORD'):
+            email = args.email
+            password = os.environ['WW_PASSWORD']
         else:
             # Read password from STDIN
             password = getpass.getpass()
@@ -417,3 +435,18 @@ if __name__ == '__main__':
 
     if requestnutrition:
         writenutritiondata(nutritionarr)
+
+    if args.gsheets:
+        if not requestnutrition:
+            sys.stderr.write('ERROR: --gsheets requires --nutrition to collect data.\n')
+            sys.exit(1)
+        sheet_id = os.environ.get('GOOGLE_SHEET_ID')
+        key_file = os.environ.get('GOOGLE_SERVICE_ACCOUNT_KEY', 'service-account-key.json')
+        if not sheet_id:
+            sys.stderr.write('ERROR: GOOGLE_SHEET_ID must be set in .env or environment.\n')
+            sys.exit(1)
+        if not os.path.exists(key_file):
+            sys.stderr.write(f'ERROR: Google service account key file not found: {key_file}\n')
+            sys.exit(1)
+        from gsheets import export_nutrition
+        export_nutrition(nutritionarr, key_file, sheet_id)

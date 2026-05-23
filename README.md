@@ -1,65 +1,143 @@
-# Weight Watchers Tracked Foods Report
+# wwtracked-gsheets
 
-> :warning: **Intended for Power Users and Developers**: This script is intended for power users and developers who are comfortable working at the command line.
+Export Weight Watchers tracked food and nutrition data to Markdown reports and Google Sheets — runs unattended on a daily schedule via Docker.
 
+This is a fork of [joswr1ght/wwtracked](https://github.com/joswr1ght/wwtracked) with these additions:
 
-I've been using Weight Watchers for a few weeks, and I wanted to export the data on tracked foods to a report.
-The weightwatchers.com website doesn't offer a function to export the data, but they have an undocumented API that is straightforward to use.
+- `.env` support for unattended/scheduled runs (no interactive password prompt)
+- Google Sheets export: one tab per month, cumulative rows, idempotent re-runs
+- Daily scheduler with randomised midnight run time (±30 min)
+- Docker Compose packaging for OrbStack or any Docker host
 
-This script takes a start date, and end date, and the weightwatchers.com JWT as command-line arguments, and displays a [Markdown-styled report](https://www.markdownguide.org/getting-started/) of the tracked foods organized by date>breakfast|lunch|dinner|snacks.
-You can use this script to generate a report of the foods you've tracked as a simple text file, or as a Markdown-rendered report using any [Markdown editor](https://www.oberlo.com/blog/markdown-editors).
+---
 
-![Report screenshot showing output including breakfast, lunch, dinner, and snacks](images/sample.png)
+## Quick start (local, no Docker)
 
-## Usage
+```bash
+git clone https://github.com/darrenjrogers/wwtracked-gsheets.git
+cd wwtracked-gsheets
+uv venv && uv pip install -r requirements.txt
 
-Using [Python](https://www.python.org/), run the `wwtracked.py` script, specifying a start date and an end date and the email address to login to the Weight Watchers website.
-The dates must be in the format YYYY-MM-DD.
-The script will interactively prompt you for your password.
-
-> :information_source: **NOTE:** To collect your Weight Watchers data, you must supply a way to authenticate to the Weight Watchers website.
-> This can be with your website email address (`-E`) and interactively entering your password when prompted, or by specifying a JSON Web Token (JWT) extracted from the `wwSession` cookie after logging in with your browser.
-> For more information on using a JWT for authentication, see [AUTHJWT.md](https://github.com/joswr1ght/wwtracked/blob/main/AUTHJWT.md).
-
-
-### Creating a Report
-
-Run `wwtracked.py`, specifying the desired date range and your email address:
-
-```
-$ python wwtracked.py -s 2022-12-20 -e 2022-12-30 -E youremail@address.tld
+cp .env.example .env
+# edit .env with your credentials
 ```
 
-The `wwtracked.py` script will retrieve the meal information for the specified date range, formatting it as a simple Markdown report.
-If you want to save this to a file, redirect the output to a file:
+Run for a date range:
 
-```
-$ python wwtracked.py 2022-12-20 2022-12-30 -E youremail@address.tld > myreport.md
-```
-
-Then you can open `myreport.md` in a text editor or a Markdown editor to get a formatted report.
-
-
-### Getting Nutritional Information
-
-Run `wwtracked.py`, specifying the desired date range, email/JWT, and add the argument '--nutrition':
-
-```
-$ python wwtracked.py -s 2022-12-20 -e 2022-12-30 --email user@example.com --nutrition
+```bash
+source .venv/bin/activate
+python wwtracked.py -s 2026-05-01 -e 2026-05-23 -n --gsheets
 ```
 
-After the `wwtracked.py` script creates the Markdown report of tracked food, the nutritional data will then be saved to a CSV file.
+---
 
+## Credentials
 
-## Contributors
+### Weight Watchers
 
-Thank you for code and documentation contributions!
+Add to `.env`:
 
-<a href="https://github.com/joswr1ght/wwtracked/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=joswr1ght/wwtracked"/>
-</a>
+```
+WW_EMAIL=you@example.com
+WW_PASSWORD=yourpassword
+```
 
+You can also pass credentials on the command line with `-E` / `-J` as before.
+The `WW_PASSWORD` env var is only used when `-E` is set (or `WW_EMAIL` is in `.env`) — it is never used with JWT auth.
 
-## Questions/Comments/Concerns
+### Google Sheets — service account setup
 
-Drop me a note jwright[at]willhackforsushi.com, or [open a ticket](https://github.com/joswr1ght/wwtracked/issues).
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Sheets API**.
+2. Create a **Service Account**, give it no special roles.
+3. Under the service account, create a JSON key and download it as `service-account-key.json` in the project root.
+4. Create a Google Sheet. Note the **Sheet ID** from the URL:
+   `https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit`
+5. Share the sheet with the service account's email address (Editor access).
+6. Add to `.env`:
+
+```
+GOOGLE_SHEET_ID=your_sheet_id_here
+```
+
+The script creates one tab per month (e.g. `2026-05`) and appends rows for each food entry. Re-running for the same date range is safe — duplicate rows are skipped.
+
+---
+
+## Docker Compose (OrbStack / Docker Desktop)
+
+### Setup
+
+1. Complete the credential steps above so you have `.env` and `service-account-key.json` in the project root.
+2. Build and start:
+
+```bash
+docker compose up -d --build
+```
+
+The container runs `scheduler.py` which:
+- On startup: fetches yesterday's data and exports to Sheets.
+- Daily: wakes at midnight ±30 minutes and repeats.
+
+Logs:
+
+```bash
+docker compose logs -f
+```
+
+Reports are written to `./reports/` on the host via the bind mount.
+
+### Stopping
+
+```bash
+docker compose down
+```
+
+---
+
+## Running on a second Mac with OrbStack
+
+1. Copy the project directory to the second Mac (or `git clone` the repo there).
+2. Place `.env` and `service-account-key.json` in the project root (these are gitignored).
+3. Install [OrbStack](https://orbstack.dev/) if not already installed.
+4. `docker compose up -d --build`
+
+---
+
+## Command-line reference
+
+```
+usage: wwtracked.py [-h] [-E EMAIL | -J JWT] -s START -e END [-n] [-l TLD] [-o FILE] [--gsheets]
+
+options:
+  -E, --email     WW login email (or set WW_EMAIL in .env)
+  -J, --jwt       WW JWT token (or set WW_JWT in .env)
+  -s, --start     Start date YYYY-MM-DD
+  -e, --end       End date YYYY-MM-DD
+  -n, --nutrition Also produce a CSV report of nutritional data
+  -l, --tld       WW site TLD (default: com)
+  -o, --output    Write Markdown report to FILE (- for stdout)
+  --gsheets       Export nutrition data to Google Sheets (requires -n)
+```
+
+---
+
+## Authentication notes
+
+The WW JWT expires ~2 hours after browser login, making it unsuitable for unattended scheduled runs. Use `WW_EMAIL` + `WW_PASSWORD` in `.env` for automated use — the script authenticates fresh on each run.
+
+For manual one-off runs you can still pass a JWT with `-J`. See [AUTHJWT.md](AUTHJWT.md) for how to extract the JWT from your browser.
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `wwtracked.py` | Main script — fetch WW data, write Markdown + CSV reports |
+| `gsheets.py` | Google Sheets export module |
+| `scheduler.py` | Docker entrypoint — daily scheduler |
+| `Dockerfile` | Container image |
+| `docker-compose.yml` | Compose service definition |
+| `.env.example` | Template for your `.env` |
+| `service-account-key.json` | Google service account key (gitignored, you provide this) |
+| `reports/` | Output directory for Markdown and CSV reports (bind-mounted in Docker) |

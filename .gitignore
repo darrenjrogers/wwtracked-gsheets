@@ -4,3 +4,6 @@ __pycache__
 .venv/
 reports/*
 !reports/.gitkeep
+.env
+service-account-key.json
+.DS_Store

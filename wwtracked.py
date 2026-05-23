@@ -419,6 +419,9 @@ if __name__ == '__main__':
         endpointurl = f'https://cmx.weightwatchers.{tld}/api/v3/cmx/operations/composed/members/~/my-day'
         url = f'{endpointurl}/{date}'
         response = requests.get(url, headers=authheader)
+        if response.status_code == 400:
+            sys.stderr.write(f'WARNING: Skipping {date} (API returned 400 — no data or not subscribed for this date)\n')
+            continue
         if (response.status_code != 200):
             sys.stderr.write(f'ERROR: Invalid response from weightwatchers.com API ({response.status_code}) for {date}.\n')
             sys.stderr.write(f'Response body: {response.text[:500]}\n')

@@ -291,14 +291,16 @@ if __name__ == '__main__':
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-E', '--email', help='Specify the login email address (or set WW_EMAIL in .env)')
     group.add_argument('-J', '--jwt', help='Specify the JWT (or set WW_JWT in .env)')
-    parser.add_argument('-s', '--start', required=True, help='Start date as YYYY-MM-DD')
-    parser.add_argument('-e', '--end', required=True, help='End date as YYYY-MM-DD')
+    parser.add_argument('-s', '--start', default=None, help='Start date as YYYY-MM-DD (not needed with --backfill)')
+    parser.add_argument('-e', '--end', default=None, help='End date as YYYY-MM-DD (default: yesterday when --backfill used)')
     parser.add_argument('-n', '--nutrition', action='store_true', help='Produce a CSV report of nutritional data')
     parser.add_argument('-l', '--tld', default='com', help='Specify the top-level domain (com, co.uk, etc.) to use for login and API endpoints')
     parser.add_argument('-o', '--output', default=None, metavar='FILE',
                         help='Write the Markdown report to FILE instead of the default reports/ directory. Use - for stdout.')
     parser.add_argument('--gsheets', action='store_true',
                         help='Export nutrition data to Google Sheets (requires GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_KEY in .env)')
+    parser.add_argument('--backfill', default=None, metavar='PERIOD',
+                        help='Backfill historical data. PERIOD: ytd, 3months, 6months, 12months, or a YYYY-MM-DD start date. End date is yesterday.')
     args = parser.parse_args()
 
     # Fall back to environment variables for credentials
@@ -313,9 +315,34 @@ if __name__ == '__main__':
         parser.print_help()
         sys.exit(1)
 
-    # Parse the easy stuff first
-    startdate = datetime.date(*map(int, args.start.split('-')))
-    enddate = datetime.date(*map(int, args.end.split('-')))
+    # Resolve backfill into start/end dates
+    if args.backfill is not None:
+        yesterday = datetime.date.today() - datetime.timedelta(days=1)
+        period = args.backfill.lower()
+        if period == 'ytd':
+            startdate = datetime.date(datetime.date.today().year, 1, 1)
+        elif period == '3months':
+            startdate = yesterday - datetime.timedelta(days=91)
+        elif period == '6months':
+            startdate = yesterday - datetime.timedelta(days=182)
+        elif period == '12months':
+            startdate = yesterday - datetime.timedelta(days=365)
+        else:
+            try:
+                startdate = datetime.date(*map(int, args.backfill.split('-')))
+            except ValueError:
+                sys.stderr.write(f'ERROR: Unrecognised --backfill value "{args.backfill}". '
+                                 'Use ytd, 3months, 6months, 12months, or YYYY-MM-DD.\n')
+                sys.exit(1)
+        enddate = yesterday
+    else:
+        if args.start is None or args.end is None:
+            sys.stderr.write('ERROR: --start and --end are required unless --backfill is used.\n')
+            parser.print_help()
+            sys.exit(1)
+        startdate = datetime.date(*map(int, args.start.split('-')))
+        enddate = datetime.date(*map(int, args.end.split('-')))
+
     if (startdate > enddate):
         sys.stderr.write('ERROR: Start date cannot follow end date.\n')
         sys.exit(-1)

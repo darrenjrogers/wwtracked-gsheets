@@ -103,20 +103,42 @@ docker compose down
 
 ---
 
+## Backfilling historical data
+
+Use `--backfill` to pull historical data in one shot. The end date is always yesterday.
+
+```bash
+# Year to date
+python wwtracked.py --backfill ytd -n --gsheets
+
+# Last 3, 6, or 12 months
+python wwtracked.py --backfill 3months -n --gsheets
+python wwtracked.py --backfill 6months -n --gsheets
+python wwtracked.py --backfill 12months -n --gsheets
+
+# Since a specific date
+python wwtracked.py --backfill 2026-01-01 -n --gsheets
+```
+
+The Google Sheets export is idempotent — rows already in the sheet are skipped, so you can re-run a backfill safely without creating duplicates.
+
+---
+
 ## Command-line reference
 
 ```
-usage: wwtracked.py [-h] [-E EMAIL | -J JWT] -s START -e END [-n] [-l TLD] [-o FILE] [--gsheets]
+usage: wwtracked.py [-h] [-E EMAIL | -J JWT] [-s START] [-e END] [-n] [-l TLD] [-o FILE] [--gsheets] [--backfill PERIOD]
 
 options:
-  -E, --email     WW login email (or set WW_EMAIL in .env)
-  -J, --jwt       WW JWT token (or set WW_JWT in .env)
-  -s, --start     Start date YYYY-MM-DD
-  -e, --end       End date YYYY-MM-DD
-  -n, --nutrition Also produce a CSV report of nutritional data
-  -l, --tld       WW site TLD (default: com)
-  -o, --output    Write Markdown report to FILE (- for stdout)
-  --gsheets       Export nutrition data to Google Sheets (requires -n)
+  -E, --email         WW login email (or set WW_EMAIL in .env)
+  -J, --jwt           WW JWT token (or set WW_JWT in .env)
+  -s, --start         Start date YYYY-MM-DD (not needed with --backfill)
+  -e, --end           End date YYYY-MM-DD (default: yesterday with --backfill)
+  -n, --nutrition     Also produce a CSV report of nutritional data
+  -l, --tld           WW site TLD (default: com)
+  -o, --output        Write Markdown report to FILE (- for stdout)
+  --gsheets           Export nutrition data to Google Sheets (requires -n)
+  --backfill PERIOD   Backfill history: ytd, 3months, 6months, 12months, or YYYY-MM-DD start date
 ```
 
 ---

@@ -28,6 +28,12 @@ SUMMARY_HEADERS = [
     'Avg Sodium (mg)',
 ]
 
+DAILY_HEADERS = [
+    'Date', 'Items Tracked',
+    'Calories', 'Protein (g)', 'Fat (g)', 'Sat Fat (g)',
+    'Carbs (g)', 'Fiber (g)', 'Sugar (g)', 'Added Sugar (g)', 'Sodium (mg)',
+]
+
 MACROS = ['calories', 'protein', 'fat', 'saturatedFat', 'carbs', 'fiber', 'sugar', 'addedSugar', 'sodium']
 
 # Column indices in HEADERS for each macro (0-based, after skipping the 5 label cols)
@@ -261,3 +267,62 @@ def update_summary(key_file, sheet_id):
     ).execute()
 
     print(f"Sheets: Summary tab updated — {len(summary_rows)} weeks written", flush=True)
+
+
+def update_daily_macros(key_file, sheet_id):
+    """
+    Reads all monthly tabs, computes per-day item counts and macro totals,
+    and overwrites the 'Daily Macros' tab. All days with any tracked data
+    are included, sorted ascending by date.
+    """
+    svc = _service(key_file)
+    rows = _read_all_data(svc, sheet_id)
+
+    day_item_count = defaultdict(int)
+    day_macros = defaultdict(lambda: defaultdict(float))
+
+    for r in rows:
+        date = r[HEADERS.index('Date')]
+        if not date:
+            continue
+        day_item_count[date] += 1
+        for macro, col in HEADER_COL.items():
+            day_macros[date][macro] += _safe_float(r[col])
+
+    daily_rows = []
+    for date_str in sorted(day_item_count):
+        m = day_macros[date_str]
+        daily_rows.append([
+            date_str,
+            day_item_count[date_str],
+            round(m['calories'], 1),
+            round(m['protein'], 1),
+            round(m['fat'], 1),
+            round(m['saturatedFat'], 1),
+            round(m['carbs'], 1),
+            round(m['fiber'], 1),
+            round(m['sugar'], 1),
+            round(m['addedSugar'], 1),
+            round(m['sodium'], 1),
+        ])
+
+    meta = _sheet_meta(svc, sheet_id)
+    existing = _existing_tabs(meta)
+    if 'Daily Macros' not in existing:
+        body = {'requests': [{'addSheet': {'properties': {'title': 'Daily Macros'}}}]}
+        svc.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
+    else:
+        svc.spreadsheets().values().clear(
+            spreadsheetId=sheet_id,
+            range="'Daily Macros'",
+        ).execute()
+
+    all_rows = [DAILY_HEADERS] + daily_rows
+    svc.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range="'Daily Macros'!A1",
+        valueInputOption='RAW',
+        body={'values': all_rows},
+    ).execute()
+
+    print(f"Sheets: Daily Macros tab updated — {len(daily_rows)} days written", flush=True)

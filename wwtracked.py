@@ -303,6 +303,8 @@ if __name__ == '__main__':
                         help='Backfill historical data. PERIOD: ytd, 3months, 6months, 12months, or a YYYY-MM-DD start date. End date is yesterday.')
     parser.add_argument('--update-summary', action='store_true',
                         help='Regenerate the Summary tab in Google Sheets from existing monthly data (no WW API call needed)')
+    parser.add_argument('--update-daily-macros', action='store_true',
+                        help='Regenerate the Daily Macros tab in Google Sheets from existing monthly data (no WW API call needed)')
     args = parser.parse_args()
 
     # --update-summary is standalone — no WW credentials or date range needed
@@ -317,6 +319,19 @@ if __name__ == '__main__':
             sys.exit(1)
         from gsheets import update_summary
         update_summary(key_file, sheet_id)
+        sys.exit(0)
+
+    if args.update_daily_macros:
+        sheet_id = os.environ.get('GOOGLE_SHEET_ID')
+        key_file = os.environ.get('GOOGLE_SERVICE_ACCOUNT_KEY', 'service-account-key.json')
+        if not sheet_id:
+            sys.stderr.write('ERROR: GOOGLE_SHEET_ID must be set in .env or environment.\n')
+            sys.exit(1)
+        if not os.path.exists(key_file):
+            sys.stderr.write(f'ERROR: Google service account key file not found: {key_file}\n')
+            sys.exit(1)
+        from gsheets import update_daily_macros
+        update_daily_macros(key_file, sheet_id)
         sys.exit(0)
 
     # Fall back to environment variables for credentials

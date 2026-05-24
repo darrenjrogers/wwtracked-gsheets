@@ -31,6 +31,14 @@ def run_update_summary():
         print(f'[scheduler] --update-summary exited with code {result.returncode}', flush=True)
 
 
+def run_update_daily_macros():
+    cmd = [sys.executable, 'wwtracked.py', '--update-daily-macros']
+    print('[scheduler] Updating Daily Macros tab', flush=True)
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print(f'[scheduler] --update-daily-macros exited with code {result.returncode}', flush=True)
+
+
 def seconds_until_next_midnight():
     now = datetime.datetime.now()
     tomorrow = (now + datetime.timedelta(days=1)).replace(
@@ -51,6 +59,7 @@ def main():
         time.sleep(wait)
         yesterday = (datetime.date.today() - datetime.timedelta(days=1))
         run_for_date(yesterday.isoformat())
+        run_update_daily_macros()
         # Sunday = weekday 6 — update summary after capturing the last day of the week
         if yesterday.weekday() == 6:
             run_update_summary()

@@ -1,10 +1,15 @@
 """
 Google Sheets export for wwtracked.
 One tab per month (e.g. "2026-05"), one row per tracked food entry.
-Rows are keyed by (date, entryId) so re-runs are idempotent.
+Rows are keyed by (date, meal, food name) so re-runs are idempotent.
+
+Summary tab: weekly averages of daily macro totals, excluding days where
+fewer than 2 of morning/midday/evening had any tracked items.
 """
 
+import datetime
 import os
+from collections import defaultdict
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -16,6 +21,28 @@ HEADERS = [
     'Fiber', 'Sugar', 'Added Sugar', 'Protein',
 ]
 
+SUMMARY_HEADERS = [
+    'Week Starting (Mon)', 'Week Ending (Sun)', 'Days Included',
+    'Avg Calories', 'Avg Protein (g)', 'Avg Fat (g)', 'Avg Sat Fat (g)',
+    'Avg Carbs (g)', 'Avg Fiber (g)', 'Avg Sugar (g)', 'Avg Added Sugar (g)',
+    'Avg Sodium (mg)',
+]
+
+MACROS = ['calories', 'protein', 'fat', 'saturatedFat', 'carbs', 'fiber', 'sugar', 'addedSugar', 'sodium']
+
+# Column indices in HEADERS for each macro (0-based, after skipping the 5 label cols)
+HEADER_COL = {
+    'calories':     HEADERS.index('Calories'),
+    'fat':          HEADERS.index('Fat'),
+    'saturatedFat': HEADERS.index('Sat Fat'),
+    'sodium':       HEADERS.index('Sodium'),
+    'carbs':        HEADERS.index('Carbs'),
+    'fiber':        HEADERS.index('Fiber'),
+    'sugar':        HEADERS.index('Sugar'),
+    'addedSugar':   HEADERS.index('Added Sugar'),
+    'protein':      HEADERS.index('Protein'),
+}
+
 
 def _service(key_file):
     creds = service_account.Credentials.from_service_account_file(key_file, scopes=SCOPES)
@@ -23,43 +50,40 @@ def _service(key_file):
 
 
 def _tab_name(date_str):
-    # date_str is YYYY-MM-DD
     return date_str[:7]
 
 
-def _ensure_tab(svc, sheet_id, tab):
-    meta = svc.spreadsheets().get(spreadsheetId=sheet_id).execute()
-    existing = [s['properties']['title'] for s in meta['sheets']]
+def _sheet_meta(svc, sheet_id):
+    return svc.spreadsheets().get(spreadsheetId=sheet_id).execute()
+
+
+def _existing_tabs(meta):
+    return {s['properties']['title']: s['properties']['sheetId'] for s in meta['sheets']}
+
+
+def _ensure_tab(svc, sheet_id, tab, meta=None):
+    if meta is None:
+        meta = _sheet_meta(svc, sheet_id)
+    existing = _existing_tabs(meta)
     if tab not in existing:
         body = {'requests': [{'addSheet': {'properties': {'title': tab}}}]}
         svc.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
-        # Write header row
         svc.spreadsheets().values().update(
             spreadsheetId=sheet_id,
             range=f"'{tab}'!A1",
             valueInputOption='RAW',
             body={'values': [HEADERS]},
         ).execute()
-    return tab
 
 
 def _existing_keys(svc, sheet_id, tab):
-    """Return set of (date, entry_id) tuples already in the sheet."""
-    result = svc.spreadsheets().values().get(
-        spreadsheetId=sheet_id,
-        range=f"'{tab}'!A:B",
-    ).execute()
-    rows = result.get('values', [])
-    # rows[0] is header; col A = Date, col B = Meal — entry_id not in sheet.
-    # We use (date, food_name, meal) as a dedup key since entry_id isn't exported.
-    # Re-read cols A, B, C (Date, Meal, Food).
     result = svc.spreadsheets().values().get(
         spreadsheetId=sheet_id,
         range=f"'{tab}'!A:C",
     ).execute()
     rows = result.get('values', [])
     keys = set()
-    for row in rows[1:]:  # skip header
+    for row in rows[1:]:
         if len(row) >= 3:
             keys.add((row[0], row[1], row[2]))
     return keys
@@ -67,7 +91,6 @@ def _existing_keys(svc, sheet_id, tab):
 
 def export_nutrition(nutrition_rows, key_file, sheet_id):
     """
-    nutrition_rows: list of dicts as returned by getfoodentrynutrition().
     Appends only rows not already present, grouped by month tab.
     """
     if not nutrition_rows:
@@ -75,7 +98,6 @@ def export_nutrition(nutrition_rows, key_file, sheet_id):
 
     svc = _service(key_file)
 
-    # Group by month tab
     by_tab = {}
     for row in nutrition_rows:
         if row is None:
@@ -120,3 +142,122 @@ def export_nutrition(nutrition_rows, key_file, sheet_id):
             print(f"Sheets: appended {len(new_rows)} rows to tab '{tab}'", flush=True)
         else:
             print(f"Sheets: no new rows for tab '{tab}'", flush=True)
+
+
+def _read_all_data(svc, sheet_id):
+    """Read all monthly tabs and return list of row dicts."""
+    meta = _sheet_meta(svc, sheet_id)
+    tabs = [t for t in _existing_tabs(meta) if len(t) == 7 and t[4] == '-']  # YYYY-MM shape
+    rows = []
+    for tab in sorted(tabs):
+        result = svc.spreadsheets().values().get(
+            spreadsheetId=sheet_id,
+            range=f"'{tab}'!A:N",
+        ).execute()
+        tab_rows = result.get('values', [])
+        for r in tab_rows[1:]:  # skip header
+            if len(r) < len(HEADERS):
+                r += [''] * (len(HEADERS) - len(r))
+            rows.append(r)
+    return rows
+
+
+def _safe_float(val):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def update_summary(key_file, sheet_id):
+    """
+    Reads all monthly tabs, computes weekly averages of daily macro totals,
+    and overwrites the Summary tab. Days with fewer than 2 of
+    morning/midday/evening having any tracked items are excluded.
+    """
+    svc = _service(key_file)
+    rows = _read_all_data(svc, sheet_id)
+
+    # Aggregate per day: meals present + macro totals
+    # day_meals[date] = set of meal names that have at least one item
+    # day_macros[date][macro] = total
+    day_meals = defaultdict(set)
+    day_macros = defaultdict(lambda: defaultdict(float))
+
+    for r in rows:
+        date = r[HEADERS.index('Date')]
+        meal = r[HEADERS.index('Meal')]
+        if not date:
+            continue
+        day_meals[date].add(meal)
+        for macro, col in HEADER_COL.items():
+            day_macros[date][macro] += _safe_float(r[col])
+
+    TRACKED_MEALS = {'morning', 'midday', 'evening'}
+
+    # Filter: keep only days where ≥2 of the 3 main meal periods have data
+    qualified_days = {
+        date for date, meals in day_meals.items()
+        if len(meals & TRACKED_MEALS) >= 2
+    }
+
+    # Group qualified days by ISO week (Monday–Sunday)
+    # week key = date of that Monday
+    week_days = defaultdict(list)
+    for date_str in qualified_days:
+        d = datetime.date.fromisoformat(date_str)
+        monday = d - datetime.timedelta(days=d.weekday())
+        week_days[monday].append(date_str)
+
+    # Build summary rows, one per complete week (exclude current/partial week)
+    today = datetime.date.today()
+    this_monday = today - datetime.timedelta(days=today.weekday())
+
+    summary_rows = []
+    for monday in sorted(week_days):
+        if monday >= this_monday:
+            continue  # skip current partial week
+        sunday = monday + datetime.timedelta(days=6)
+        days = week_days[monday]
+        n = len(days)
+        avgs = {}
+        for macro in MACROS:
+            total = sum(day_macros[d][macro] for d in days)
+            avgs[macro] = round(total / n, 1) if n else ''
+        summary_rows.append([
+            monday.isoformat(),
+            sunday.isoformat(),
+            n,
+            avgs['calories'],
+            avgs['protein'],
+            avgs['fat'],
+            avgs['saturatedFat'],
+            avgs['carbs'],
+            avgs['fiber'],
+            avgs['sugar'],
+            avgs['addedSugar'],
+            avgs['sodium'],
+        ])
+
+    # Overwrite Summary tab entirely
+    meta = _sheet_meta(svc, sheet_id)
+    existing = _existing_tabs(meta)
+    if 'Summary' not in existing:
+        body = {'requests': [{'addSheet': {'properties': {'title': 'Summary'}}}]}
+        svc.spreadsheets().batchUpdate(spreadsheetId=sheet_id, body=body).execute()
+    else:
+        # Clear existing content
+        svc.spreadsheets().values().clear(
+            spreadsheetId=sheet_id,
+            range="'Summary'",
+        ).execute()
+
+    all_rows = [SUMMARY_HEADERS] + summary_rows
+    svc.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range="'Summary'!A1",
+        valueInputOption='RAW',
+        body={'values': all_rows},
+    ).execute()
+
+    print(f"Sheets: Summary tab updated — {len(summary_rows)} weeks written", flush=True)
